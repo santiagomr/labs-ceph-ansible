@@ -1,0 +1,11 @@
+---
+
+users_list:
+
+  - name: ubuntu
+    password: secret
+    authorized_key: 'ssh-ed25519 AAAAC3NzabdtzdNZLyxa0HIKRx9MX6aptHBQ1xFx3gad7BQ8fvtfaZDlIKBUwcUQh30Y example@santiagomr.com'
+    groups: sudo
+
+
+admin_dashboard_password: secret

@@ -1,0 +1,12 @@
+---
+
+- name: Import custom variables
+  hosts: all
+  tasks:
+    - include_vars: vars.yml
+
+- name: Basic configuration playbook
+  import_playbook: playbooks/basic_configuration.yml
+
+- name: Ceph provision playbook
+  import_playbook: playbooks/ceph.yml

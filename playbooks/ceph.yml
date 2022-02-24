@@ -1,0 +1,119 @@
+---
+# Ceph cluster installation and initialization playbook via cephadm
+# Author: @santiagomr
+
+
+- name: Ceph packages installation
+  hosts: all
+  become: true
+  gather_facts: yes
+
+  tasks:
+
+  # Get Packages (https://docs.ceph.com/en/latest/install/get-packages/)
+  - name: Add Ceph repository key [all nodes]
+    ansible.builtin.apt_key:
+      url: https://download.ceph.com/keys/release.asc
+      state: present
+
+  - name: Add Ceph repository [all nodes]
+    ansible.builtin.apt_repository:
+      repo: "deb https://download.ceph.com/debian-octopus/ {{ ansible_distribution_release }} main"
+      state: present
+
+  # Distribution-specific installations (https://docs.ceph.com/en/latest/cephadm/install/#distribution-specific-installations)
+  - name: Install cephadm and other required packages [all nodes]
+    ansible.builtin.apt:
+      name:
+        - cephadm
+        - chrony
+      state: present
+      update_cache: yes
+
+
+- name: Ceph cluster initialization
+  hosts: masters
+  become: true
+  gather_facts: no
+
+  tasks:
+      # Enable Ceph CLI (https://docs.ceph.com/en/latest/cephadm/install/#enable-ceph-cli)
+    - name: Enable Ceph CLI [master node]
+      ansible.builtin.command:
+        cmd: "{{ item }}"
+      loop:
+        - cephadm add-repo --release octopus
+        - cephadm install ceph-common
+
+    - name: Check if the ceph cluster is already initialized [master node]
+      ansible.builtin.stat:
+        path: /etc/ceph/ceph.conf
+      register: ceph_conf_stat
+
+    - block:
+        # Bootstrap a new cluster (https://docs.ceph.com/en/latest/cephadm/install/#bootstrap-a-new-cluster)
+      - name: Bootstrap a new cluster [master node]
+        ansible.builtin.command:
+          cmd: >
+            cephadm bootstrap
+              --mon-ip {{ ansible_host }}
+              --initial-dashboard-password {{ admin_dashboard_password | default('secret') }}
+        register: cephadm_bootstrap_result
+
+      - name: Show cluster bootstraping result [master node]
+        ansible.builtin.debug:
+          var: cephadm_bootstrap_result
+
+      when: not ceph_conf_stat.stat.exists | bool
+
+    - name: Get ceph.pub key [master node]
+      ansible.builtin.fetch:
+        src: /etc/ceph/ceph.pub
+        dest: /tmp/labs-ceph-ansible.pub
+        flat: yes
+
+
+- name: Ceph cluster nodes configuration
+  hosts: all
+  become: true
+  gather_facts: no
+
+  tasks:
+    # Adding Hosts (https://docs.ceph.com/en/latest/cephadm/host-management/#cephadm-adding-hosts) (https://docs.ceph.com/en/latest/cephadm/install/#adding-hosts)
+    - name: Set authorized_key taken from ceph_pub_key file on worker nodes [worker nodes]
+      ansible.posix.authorized_key:
+        user: root
+        key: "{{ lookup('file', '/tmp/labs-ceph-ansible.pub') }}"
+        state: present
+      when: groups.workers is defined and inventory_hostname in groups.workers
+
+    - block:
+
+      - name: Add workers hosts to cluster [master node]
+        ansible.builtin.command:
+          cmd: "ceph orch host add {{ item }} {{ hostvars[item]['ansible_host'] }} --labels _worker"
+        register: cephadm_bootstrap_result
+        loop: "{{ groups.workers }}"
+
+        # Creating New OSDs (https://docs.ceph.com/en/latest/cephadm/services/osd/#cephadm-deploy-osds)
+      - name: Tell Ceph to consume any available and unused storage device [master node]
+        ansible.builtin.command:
+          cmd: ceph orch apply osd --all-available-devices
+
+      when: groups.masters is defined and inventory_hostname in groups.masters
+
+
+- name: Concluding
+  hosts: masters
+  become: false
+  gather_facts: no
+
+  tasks:
+    - name: Access to the Ceph Dashboard
+      ansible.builtin.debug:
+        msg:
+          - "Congratulations, you can now log in to the Ceph Dashboard:"
+          - "https://192.168.60.11:8443"
+          - "User: admin"
+          - "Password: {{ admin_dashboard_password | default('secret') }}"
+      delegate_to: localhost
